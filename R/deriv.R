@@ -138,6 +138,54 @@ DLSgompertz <- function(t, shape, rate){
     res
 }
 
+difference_digamma_log <- function(x) {
+    xn1 <- 1 / x
+    xn2 <- xn1 * xn1
+    xn1 * (
+        (-1/2) + xn1 * (
+            (-1/12) + xn2 * (
+                (1/120) + xn2 * (
+                    (-1/252) + xn2 * (
+                        (1/240) + xn2 * (
+                            (-5/660) + xn2 * (
+                                    (691 / 32760) - xn2 * (1/12)
+    )))))))
+
+
+}
+
+DLdgengamma <- function(t, mu, sigma, Q) {
+    res <- matrix(nrow=length(t), ncol=3)
+    # assumptions:
+    # -     t in [0, inf]
+    # -    mu in (-inf, inf)
+    # - sigma in [   0, inf]
+    # -     Q in (-inf, inf)
+    w <- (log(t) - mu) / sigma                 # from dgengamma definition
+    w[is.nan(w)] <- 0                          # if t = 0 and sigma = inf
+    # w in [-inf, inf]
+    # TODO: Q == 0; how to handle? 
+    Q0 <- (Q == 0)
+    Qwon2 <- Q[!Q0] * w[!Q0] * 0.5             # recycled value
+    # factor to compute Dmu, Dsigma; exp(Qw) - 1
+    A <- 2 * sinh(Qwon2) * exp(Qwon2)          # more stable than exp(Qw) - 1
+    A[is.nan(A)] <- -1                         # case sinh(...) = -Inf
+    sigmafin <- is.finite(sigma[!Q0])
+    res[!Q0,1][sigmafin] <- A[sigmafin] /
+                                (sigma[!Q0][sigmafin] * Q[!Q0][sigmafin])
+    # Dsigma - TODO: can lose precision when A close to Q/w
+    res[!Q0,2] <- (w[!Q0] * A / Q[!Q0]) - 1  # derivate w.r.t log scale
+    
+    
+    Qpn2 <- 1 / Q[!Q0]^2
+    # TODO: 1/Q^2 = 0 (i.e. Q > approx 1e154) ?
+    res[!Q0,3] <- (
+                      A * (2 * Qpn2 - 1) - # bad if Q -> sqrt(2)
+                      w[!Q0] / Q[!Q0] +
+                      2 * Qpn2 * (digamma(Qpn2) - log(Qpn2)) # use other func for qpn2 > 6
+                  ) / Q[!Q0]
+}
+
 DLdsurvspline <- function(t, gamma, beta=0, X=0, knots=c(-10,10), scale="hazard", timescale="log"){
     d <- dbase.survspline(q=t, gamma=gamma, knots=knots, scale=scale, deriv=TRUE)
     for (i in seq_along(d)) assign(names(d)[i], d[[i]]); t <- q
