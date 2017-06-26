@@ -138,20 +138,26 @@ DLSgompertz <- function(t, shape, rate){
     res
 }
 
+
 difference_digamma_log <- function(x) {
-    xn1 <- 1 / x
+
+    # non-portable constant; relative error < 1e-14 on x64 machine, R v3.3.0 at
+    # this cut-off
+    xlt <- x < 5e1
+    res <- rep(NA, length(x))
+    res[xlt] <- digamma(x[xlt]) - log(x[xlt])
+    xn1 <- 1 / x[!xlt]
     xn2 <- xn1 * xn1
-    xn1 * (
-        (-1/2) + xn1 * (
-            (-1/12) + xn2 * (
-                (1/120) + xn2 * (
-                    (-1/252) + xn2 * (
-                        (1/240) + xn2 * (
-                            (-5/660) + xn2 * (
-                                    (691 / 32760) - xn2 * (1/12)
-    )))))))
-
-
+    res[!xlt] <- xn1 * ((-1/2) +
+                   xn1 * ((-1/12) + 
+                     xn2 * ((1/120) +
+                       xn2 * ((-1/252) + 
+                         xn2 * ((1/240) +
+                           xn2 * ((-5/660) +
+                             xn2 * ((691 / 32760) -
+                               xn2 * (1/12)
+                 )))))))
+    res
 }
 
 DLdgengamma <- function(t, mu, sigma, Q) {
@@ -166,24 +172,35 @@ DLdgengamma <- function(t, mu, sigma, Q) {
     # w in [-inf, inf]
     # TODO: Q == 0; how to handle? 
     Q0 <- (Q == 0)
-    Qwon2 <- Q[!Q0] * w[!Q0] * 0.5             # recycled value
-    # factor to compute Dmu, Dsigma; exp(Qw) - 1
+    # recycled value; Qw/2
+    Qwon2 <- Q[!Q0] * w[!Q0] * 0.5
+    # recycled factor; exp(Qw) - 1
     A <- 2 * sinh(Qwon2) * exp(Qwon2)          # more stable than exp(Qw) - 1
     A[is.nan(A)] <- -1                         # case sinh(...) = -Inf
     sigmafin <- is.finite(sigma[!Q0])
     res[!Q0,1][sigmafin] <- A[sigmafin] /
                                 (sigma[!Q0][sigmafin] * Q[!Q0][sigmafin])
-    # Dsigma - TODO: can lose precision when A close to Q/w
-    res[!Q0,2] <- (w[!Q0] * A / Q[!Q0]) - 1  # derivate w.r.t log scale
-    
-    
-    Qpn2 <- 1 / Q[!Q0]^2
-    # TODO: 1/Q^2 = 0 (i.e. Q > approx 1e154) ?
-    res[!Q0,3] <- (
-                      A * (2 * Qpn2 - 1) - # bad if Q -> sqrt(2)
-                      w[!Q0] / Q[!Q0] +
-                      2 * Qpn2 * (digamma(Qpn2) - log(Qpn2)) # use other func for qpn2 > 6
-                  ) / Q[!Q0]
+    # Dsigma - NOTE: loses precision when A close to Q/w, expansions maybe when
+    #                   1/Q << Q (and w ~ 1)?
+    res[!Q0,2] <- (w[!Q0] * A / Q[!Q0]) - 1    # derivate w.r.t exp(sigma)
+
+    # TODO: what if 1/Q^2 = Inf
+    #   - implies x*difference_digamma_log(x) -> -1/2
+    #   - A * inf should be inf unless w = 0? then tricky :| - need limit
+    #   - w / Q -> same deam ... infact this is the same order as the leading
+    #     order term of the previous exponential.
+    Qprsq <- 1 / Q[!Q0]^2
+    Qprsq0 <- Qprsq == 0
+    Qprsq <- Qprsq[Qprsq != 0]
+    res[!Q0[!Qprsq0],3] <- (
+                               A * (2 * Qprsq - 1) -
+                               w[!Q0[!Qprsq0]] / Q[!Q0[!Qprsq0]] +
+                               2 * Qprsq * difference_digamma_log(Qprsq)
+                           ) / Q[!Q0[!Qprsq0]]
+    # given x(digamma(x) - log(x)) -> -1 as x -> 0
+    res[!Q0[Qpn20],3] <- -(A + w[!Q0[Qprsq0]] / Q[!Q0[Qprsq0]] + 2) /
+                              Q[!Q0[Qprsq0]]
+
 }
 
 DLdsurvspline <- function(t, gamma, beta=0, X=0, knots=c(-10,10), scale="hazard", timescale="log"){
