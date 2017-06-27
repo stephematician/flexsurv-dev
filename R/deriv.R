@@ -138,25 +138,26 @@ DLSgompertz <- function(t, shape, rate){
     res
 }
 
-
-difference_digamma_log <- function(x) {
-
-    # non-portable constant; relative error < 1e-14 on x64 machine, R v3.3.0 at
-    # this cut-off
-    xlt <- x < 5e1
+ac_digamma_log_term <- function(x) {
+    # an affine combination of digamma and log used in DLdgengamma
     res <- rep(NA, length(x))
-    res[xlt] <- digamma(x[xlt]) - log(x[xlt])
-    xn1 <- 1 / x[!xlt]
+    # technically 'non-portable' constant; relative error ~ 1e-14 (x64
+    # machine, R v3.3.0) between standard functions and series at x ~ 2e1
+    useinbuilt <- x < 2e1
+    res[useinbuilt] <- 1 + 2 * x[useinbuilt] * (digamma(x[useinbuilt]) -
+                                                    log(x[useinbuilt]))
+    xn1 <- 1 / x[!useinbuilt]
     xn2 <- xn1 * xn1
-    res[!xlt] <- xn1 * ((-1/2) +
-                   xn1 * ((-1/12) + 
-                     xn2 * ((1/120) +
-                       xn2 * ((-1/252) + 
-                         xn2 * ((1/240) +
-                           xn2 * ((-5/660) +
-                             xn2 * ((691 / 32760) -
-                               xn2 * (1/12)
-                 )))))))
+    # although 'non-portable'; decimal form executes faster than fractions
+    res[!useinbuilt] <- 2 * xn1 * (-0.08333333333333333 + 
+                              xn2 * (0.0083333333333333 +
+                                xn2 * (-0.00396825396825 + 
+                                  xn2 * (0.004166666667 +
+                                    xn2 * (-0.0075757576 +
+                                      xn2 * (0.0210928 +
+                                        xn2 * (-0.08333 +
+                                          xn2 * 0.44
+                            )))))))
     res
 }
 
@@ -165,41 +166,78 @@ DLdgengamma <- function(t, mu, sigma, Q) {
     # assumptions:
     # -     t in [0, inf]
     # -    mu in (-inf, inf)
-    # - sigma in [   0, inf]
+    # - sigma in [   0, inf]                   # although sigma 'finite'
     # -     Q in (-inf, inf)
     w <- (log(t) - mu) / sigma                 # from dgengamma definition
-    w[is.nan(w)] <- 0                          # if t = 0 and sigma = inf
-    # w in [-inf, inf]
-    # TODO: Q == 0; how to handle? 
+    # NOTE: can't handle log(t)-mu = +/-Inf if sigma = Inf; will produce NaN
+    w[t==0] <- -Inf
+    w[t==Inf] <- Inf
+
+    wnan <- is.nan(w)
     Q0 <- (Q == 0)
+
+    # Dmu
+    # Recycled factor; exp(Qw) - 1. Use 2*sinh(Qw/2)*exp(Qw/2) (more stable).
     # recycled value; Qw/2
     Qwon2 <- Q[!Q0] * w[!Q0] * 0.5
-    # recycled factor; exp(Qw) - 1
-    A <- 2 * sinh(Qwon2) * exp(Qwon2)          # more stable than exp(Qw) - 1
-    A[is.nan(A)] <- -1                         # case sinh(...) = -Inf
-    sigmafin <- is.finite(sigma[!Q0])
-    res[!Q0,1][sigmafin] <- A[sigmafin] /
-                                (sigma[!Q0][sigmafin] * Q[!Q0][sigmafin])
-    # Dsigma - NOTE: loses precision when A close to Q/w, expansions maybe when
-    #                   1/Q << Q (and w ~ 1)?
-    res[!Q0,2] <- (w[!Q0] * A / Q[!Q0]) - 1    # derivate w.r.t exp(sigma)
+    A <- sinh(Qwon2)
+    sinhminf <- is.infinite(A) & A < 0
+    A[sinhminf] <- -1                          # case sinh(...) = -Inf
+    A[!sinhminf] <- 2 * A[!sinhminf] * exp(Qwon2[!sinhminf])
+    # recycled value; sigma*Q
+    sigmaQ <- sigma[!Q0] * Q[!Q0]
+    dmuinf <- rep(F, length(t))
+    dmuinf[!Q0] <- is.infinite(w[!Q0]) & is.infinite(A)
+    res[!Q0 & dmuinf & !wnan,1] <- Inf * sign(sigmaQ[dmuinf])
+    # NOTE: for Q!=0; can't handle A infinite and w finite, will produce NaN.
+    res[!Q0 & !dmuinf,1] <- A[!dmuinf[!Q0]] / (sigmaQ[!dmuinf])
+    res[Q0,1] <- w[Q0] / sigma[Q0]             # limit via power series
 
-    # TODO: what if 1/Q^2 = Inf
-    #   - implies x*difference_digamma_log(x) -> -1/2
-    #   - A * inf should be inf unless w = 0? then tricky :| - need limit
-    #   - w / Q -> same deam ... infact this is the same order as the leading
-    #     order term of the previous exponential.
-    Qprsq <- 1 / Q[!Q0]^2
+    # Dexp(sigma)
+    # NOTE: loses precision when A close to Q/w
+    # NOTE: for Q!=0; can't hande A/Q infinite and w finite, will produce NaN.
+    res[!Q0,2] <- (w[!Q0] * A / Q[!Q0]) - 1
+    res[!Q0 & !is.infinite(res[,2]) & w == 0,2] <- -1
+    res[!Q0 & is.infinite(res[,2]) & is.finite(w),2] <- NaN
+    res[Q0,2] <- w[Q0]^2 - 1                   # limit via power series
+
+    # TODO: Q == 0; log-normal?
+    Qprsq <- (1 / Q[!Q0])^2                    # more stable than 1/((.)^2)
     Qprsq0 <- Qprsq == 0
-    Qprsq <- Qprsq[Qprsq != 0]
+    Qprsq <- Qprsq[!Qprsq0]
+    # when Q != 0 (Q always finite)
+    # so 1/Q^2 can potentially be zero or infinite
+    # w can be finite or infinite
+    # A can be finite or infinite (if infinite, then when w is infinite; ok,
+    # otherwise we really don't know what value this should take)
+    #
+    # when Q == 0 derivative approaches -ve inf
+    
+    # So! Need care 
+    #  - if A = 0 and 1/Q^2 is Inf
+    #  - if A is inf and 1/Q^2 is zero
+    #  - if w * (exp(Qw) + 1) / Q is +/-Inf and A * 2 / Q^2 is -/+Inf
+    # final term is super nicely behaved so no worries (always finite) :D until
+    # we divide by Q HAH
     res[!Q0[!Qprsq0],3] <- (
-                               A * (2 * Qprsq - 1) -
-                               w[!Q0[!Qprsq0]] / Q[!Q0[!Qprsq0]] +
-                               2 * Qprsq * difference_digamma_log(Qprsq)
+                               (A * 2 * Qprsq) -
+                               (
+                                   w[!Q0[!Qprsq0]] *
+                                        (exp(2*Qwon2[!Qprsq0]) + 1) / 
+                                        Q[!Q0[!Qprsq0]]
+                               ) + ac_digamma_log_term(Qprsq)
                            ) / Q[!Q0[!Qprsq0]]
-    # given x(digamma(x) - log(x)) -> -1 as x -> 0
-    res[!Q0[Qpn20],3] <- -(A + w[!Q0[Qprsq0]] / Q[!Q0[Qprsq0]] + 2) /
-                              Q[!Q0[Qprsq0]]
+    res[!Q0[Qprsq0],3] <- (
+                               1 - 
+                               (
+                                    w[!Q0[Qprsq0]] *
+                                        (exp(2 * Qwon2[Qpsrsq0]) + 1) /
+                                        Q[!Q0[Qprsq0]]
+                               ) /
+                          ) / Q[!Q0[Qprsq0]]
+    # for small w/Q ? do I need to be careful?
+    # what about w = +/- inf?
+    res[Q0,3] <- -Inf
 
 }
 
