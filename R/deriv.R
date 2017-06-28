@@ -187,20 +187,20 @@ DLdgengamma <- function(t, mu, sigma, Q) {
 
     # recycled value: 1/Q
     Qr <- (1 / Q[nQ0wnan])
-    # recycled value: Qw/2
-    Qwon2 <- Q[nQ0wnan] * w[nQ0wnan] * 0.5
+    # recycled value: Qw
+    Qw <- Q[nQ0wnan] * w[nQ0wnan]
     # recycled factor: exp(Qw) - 1 = 2*sinh(Qw/2)*exp(Qw/2); more stable
-    A <- sinh(Qwon2)
-    Aeqn1 <- is.infinite(A) & sign(Qwon2) < 0
+    A <- sinh(0.5*Qw)
+    Aeqn1 <- is.infinite(A) & sign(Qw) < 0
     A[Aeqn1] <- -1                             # case sinh(...) = -Inf
-    A[!Aeqn1] <- 2 * A[!Aeqn1] * exp(Qwon2[!Aeqn1])
+    A[!Aeqn1] <- 2 * A[!Aeqn1] * exp(0.5*Qw[!Aeqn1])
 
     # Dmu
     # Dmu infinite:
     # NOTE: _exclude_ Q != 0 and w == 0 and sigma == 0; non-commuting limits
     dmuinf <- sigma == 0
     dmuinf[nQ0wnan] <- (dmuinf[nQ0wnan] & w[nQ0wnan] != 0) |
-                           (is.infinite(w[nQ0wnan]) & sign(Qwon2) > 0)
+                           (is.infinite(w[nQ0wnan]) & sign(Qw) > 0)
     # Dmu finite:
     # NOTE: for Q != 0; A infinite (and w finite) can have order(sigma*Q) loss
     #       of precision, or NaN if sigma*Q infinite; should give warning?
@@ -227,17 +227,42 @@ DLdgengamma <- function(t, mu, sigma, Q) {
     # recycled value: 1/Q^2
     Qrsq <- Qr^2
     # so we need to think about
-    #   - A * Q when A is 0 and Qrsq is infinite (Q != 0 ... but close)
     #   - w / Q when w and Q are both infinite
     # NOTE: for Q != 0; A infinite and 1/Q^2 finite can induce an order(Q^2) loss
     #       of precision, or NaN if 1/Q^2 is zero; should give warning?
-    dQinf <- sigma == 0 # & Q != 0 etc?
-    res[nQ0wnan,3] <- (2 * A * Qrsq -
-                          w[nQ0wnan] * (exp(2*Qwon2) + 1) * Qr +
-                          ac_I_digamma_log_term(Qrsq)) * Qr
-    # TODO: series expression when Qw small and Q ~ w (i.e. A << 1/Q^2)
+    # 'non-portable' cutoff where truncated series is more accurate
+    useseries <- abs(Qw) < 0.75
+    res[nQ0wnan,3][!useseries] <- (
+                                      2 * A[!useseries] * Qrsq[!useseries] -
+                                      w[nQ0wnan][!useseries] *
+                                          (exp(Qw[!useseries]) + 1) *
+                                          Qr[!useseries] +
+                                      ac_I_digamma_log_term(Qrsq[!useseries])
+                                  ) * Qr
+    # TODO: wasteful if Qr or Qrsq is infinite
+    Qwt <- Qw[useseries]
+    res[nQ0wnan,3][useseries] <- -Qrsq[useseries] *
+                                   (0.1666666666666667 +
+                                      Qwt * (0.0833333333333333 +
+                                        Qwt * (0.025 +
+                                          Qwt * (5.555555555556e-03 +
+                                            Qwt * (9.92063492063e-04 +
+                                              Qwt * (1.4880952381e-04 +
+                                                Qwt * (1.929012346e-05 +
+                                                  Qwt * (1.10229277e-06 +
+                                                    Qwt * (2.2546898e-07 +
+                                                      Qwt * (2.087676e-08 +
+                                                        Qwt * (1.76649e-09 +
+                                                          Qwt * (1.3765e-10 +
+                                                            Qwt * (9.941e-12 +
+                                                              Qwt * (6.69e-13 +
+                                                                Qwt * (4.2e-14 +
+                                                                  Qwt * 2e-15
+                                   ))))))))))))))) +
+                                 ac_I_digamma_log_term(Qrsq[useseries]) *
+                                     Qr[useseries]
     # limit via power series
-    res[Q0,3] <- -(w[Q0]^3) * 0.16666666666666667
+    res[Q0,3] <- -(w[Q0]^3) * 0.1666666666666667
 
     res
 }
