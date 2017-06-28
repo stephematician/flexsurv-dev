@@ -211,8 +211,8 @@ DLdgengamma <- function(t, mu, sigma, Q) {
                                        sigma[nQ0wnan & dmufin])
     # limit via power series
     res[Q0nwnan,1] <- w[Q0nwnan] / sigma[Q0nwnan]
-    # case when sigma infinite and t is zero or infinite
-    res[Q0nwnan & is.infinite(w),1] <- Inf * sign(Q[Q0nwnan & is.infinite(w)])
+    # case when t is zero or infinite (any sigma, even inf)
+    res[Q0nwnan & is.infinite(w),1] <- Inf * sign(w[Q0nwnan & is.infinite(w)])
 
     # Dexp(sigma)
     # NOTE: loses precision when A close to Q/w
@@ -235,11 +235,11 @@ DLdgengamma <- function(t, mu, sigma, Q) {
     res[nQ0wnan,3] <- (2 * A * Qrsq -
                           w[nQ0wnan] * (exp(2*Qwon2) + 1) * Qr +
                           ac_I_digamma_log_term(Qrsq)) * Qr
-    # for small w/Q ? do I need to be careful?
-
+    # TODO: series expression when Qw small and Q ~ w (i.e. A << 1/Q^2)
     # limit via power series
     res[Q0,3] <- -(w[Q0]^3) * 0.16666666666666667
 
+    res
 }
 
 DLdsurvspline <- function(t, gamma, beta=0, X=0, knots=c(-10,10), scale="hazard", timescale="log"){
