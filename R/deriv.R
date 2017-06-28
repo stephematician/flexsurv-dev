@@ -206,8 +206,8 @@ DLdgengamma <- function(t, mu, sigma, Q) {
     #       of precision, or NaN if sigma*Q infinite; should give warning?
     dmufin <- sigma != 0
     res[nQ0wnan & dmuinf,1] <- Inf * sign(Q[dmuinf & nQ0wnan])
-    res[nQ0wnan & dmufin,1] <- A[dmufin[nQ0wnan]] *
-                                  (Qr[dmufin[nQ0wnan]] / 
+    res[nQ0wnan & dmufin,1] <- A[dmufin[nQ0wnan]] /
+                                  (Q[dmufin & nQ0wnan] * 
                                        sigma[nQ0wnan & dmufin])
     # limit via power series
     res[Q0nwnan,1] <- w[Q0nwnan] / sigma[Q0nwnan]
@@ -217,7 +217,7 @@ DLdgengamma <- function(t, mu, sigma, Q) {
     # Dexp(sigma)
     # NOTE: loses precision when A close to Q/w
     # NOTE: _for Q != 0; A infinite (and w finite) can have an order(Q) loss of
-    #       precision, or NaN if 1/Q is zero; should give warning?
+    #       precision; should give warning?
     res[nQ0wnan,2] <- (w[nQ0wnan] * A) * Qr - 1
     res[nQ0wnan & w == 0,2] <- -1
     # limit via power series
